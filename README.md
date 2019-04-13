@@ -1,14 +1,14 @@
-= XML Calabash TextDiff Step
+# XML Calabash TextDiff Extension Step
 
 This repisitory contains an extension step for
-http://github.com/ndw/xmlcalabash1/ [XML Calabash]
+[XML Calabash](https://github.com/ndw/xmlcalabash1/)
 to compare two text files. It uses the Java Diff Utils;
 specifically, it has been tested against Jair Ogen's fork,
-https://github.com/java-diff-utils/java-diff-utils/ [Java Diff Utils].
+[Java Diff Utils](https://github.com/java-diff-utils/java-diff-utils/).
 
 This step should not care which version of Saxon you use, although it does depend on the Treebuilder API.
 
-== Installation
+## Installation
 
 TextDiff was tested on a Mageia Linux system but should be portable. To build,
 ./gradlew dist
