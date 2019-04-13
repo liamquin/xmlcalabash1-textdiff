@@ -1,10 +1,10 @@
 = XML Calabash TextDiff Step
 
 This repisitory contains an extension step for
-http://github.com/ndw/xmlcalabash1[XML Calabash]
+http://github.com/ndw/xmlcalabash1/ [XML Calabash]
 to compare two text files. It uses the Java Diff Utils;
 specifically, it has been tested against Jair Ogen's fork,
-https://github.com/java-diff-utils/java-diff-utils/[Java Diff Utils].
+https://github.com/java-diff-utils/java-diff-utils/ [Java Diff Utils].
 
 This step should not care which version of Saxon you use, although it does depend on the Treebuilder API.
 
