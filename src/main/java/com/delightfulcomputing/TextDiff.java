@@ -48,35 +48,38 @@ import difflib.DiffUtils;
 )
 
 public class TextDiff extends DefaultStep {
-    public static final QName _text_file1 = new QName("", "text-file1");
-    public static final QName _text_file2 = new QName("", "text-file2");
-
 
     // private static final String library_xpl = "ttps://www.delightfulcomputing.com/xproc/xpl/textdiff.xpl";
     // private static final String library_url = "/com/delightfulcomputing/extensions/textdiff/library.xpl";
 
-    /* Attributes */
-    private static final QName _original_uri = new QName("", "original-uri");
-    private static final QName _revised_uri = new QName("", "revised-uri");
-
-    private ReadablePipe source = null;
-    private WritablePipe result = null;
+    private ReadablePipe originalPort = null;
+    private ReadablePipe revisedPort = null;
+    private WritablePipe resultPipe = null;
 
     public TextDiff(XProcRuntime runtime, XAtomicStep step) {
         super(runtime, step);
     }
 
-    public void setInput(String port, ReadablePipe pipe) {
-        source = pipe;
+    public void setInput(String port, ReadablePipe pipe) throws XProcException {
+	if (port.equals("original")) {
+	    originalPort = pipe;
+	} else if (port.equals("revised")) {
+	    revisedPort = pipe;
+	} else {
+	    throw new XProcException(
+		"textdiff: unknown port name " + port + " - expected original or revised"
+	    );
+	}
     }
 
     public void setOutput(String port, WritablePipe pipe) {
-        result = pipe;
+        resultPipe = pipe;
     }
 
     public void reset() {
-        source.resetReader();
-        result.resetWriter();
+        originalPort.resetReader();
+        revisedPort.resetReader();
+        resultPipe.resetWriter();
     }
 
     private static String deltaType(Delta<String> delta) {
@@ -98,6 +101,24 @@ public class TextDiff extends DefaultStep {
     static private final QName c_orig = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"original");
     static private final QName c_rev = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"revised");
     static private final QName c_chunk = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"chunk");
+
+    private static String getTextFromPort(ReadablePipe source)
+	throws SaxonApiException
+    {
+	XdmNode doc = source.read();
+	XdmNode root = S9apiUtils.getDocumentElement(doc);
+
+	final QName _content_type = new QName("content-type");
+
+        if ((XProcConstants.c_data.equals(root.getNodeName())
+                && "application/octet-stream".equals(root.getAttributeValue(_content_type)))
+                || "base64".equals(root.getAttributeValue(_encoding))) {
+            byte[] decoded = Base64.decode(root.getStringValue());
+            return new String(decoded);
+        } else {
+            return root.getStringValue();
+        }
+    }
 
     private static void chunkToXML(
 	    TreeWriter tree,
@@ -141,9 +162,6 @@ public class TextDiff extends DefaultStep {
 	tree.addAttribute(new QName("revised-uri"), revised_uri);
 	// Add java text utils version as an attribute??
 
-	// I am not sure we need a base attribute
-        // tree.addAttribute(xml_base, baseuri.toString());
-
 	for (Delta<String> delta: patch.getDeltas()) {
 	    tree.addStartElement(c_delta);
             tree.addAttribute(new QName("type"), deltaType(delta));
@@ -163,40 +181,135 @@ public class TextDiff extends DefaultStep {
         tree.addEndElement();
         tree.endDocument();
         return tree.getResult();
-    }
+    } // patchToXML
 
     @Override
     public void run() throws SaxonApiException {
 	super.run();
 
+	/* attributes */
+	QName _original_uri = new QName("", "original-uri");
+	QName _revised_uri = new QName("", "revised-uri");
+
+	/* or actual content */
+	QName _original_text = new QName("", "original-text");
+	QName _revised_text = new QName("", "revised-text");
+
 	// don't care if we have no input
 	//
-	// TODO support Base64 input, text input, URI input on each channel
+	List<String> original = null;
+	List<String> revised  = null;
+
 	String original_uri = null;
 	String revised_uri = null;
 
-	String s = getOption(_original_uri, (String) null);
+	String s = null;
+
+	// Most of the code in this method is just about trying to find
+	// our input.
+	// Look for explicitly supplied data first; then look for
+	// filenames. That way if both are supplied and the file doesn't
+	// exist, you get the error about supplying both, not an I/O
+	// exception.
+	// Finally, try to read an XProc input port, if there is no text
+	// attribute and filename (URI) attribute
+
+	s = getOption(_original_text, (String) null);
 	if (s != null) {
-	    original_uri = s;
+	    // [1] got original-text attribute
+
+	    if (getOption(_original_uri, (String) null) != null) {
+		throw new XProcException(
+			// Do not include the values in the error message as
+			// they could be very long, could contain newlines, etc
+			"TextDiff: do not supply both original-uri and original-text attributes"
+		);
+	    }
+	    original = new ArrayList<String>(Arrays.asList(
+			s.split("\r?[\n\u0085\u2028\u2029]")));
+	    original_uri = "data:original-text";
+	} else {
+	    // original-text arrtibute not given, try for filename
+	    s = getOption(_original_uri, (String) null);
+	    if (s != null) {
+		// [2] got filename
+		original_uri = s;
+		try {
+		    original = fileToLines(original_uri);
+		} catch (Exception e) {
+		    throw new XProcException(e);
+		}
+	    } else {
+		// nope, no filename, so try input port
+		s = getTextFromPort(originalPort);
+		if (s != null) {
+		    // [3] got input port
+		    original = new ArrayList<String>(Arrays.asList(
+				s.split("\r?[\n\u0085\u2028\u2029]")));
+		    original_uri = "data:original-port";
+		} else {
+		    // can't find any input
+		    throw new XProcException(
+			"TextDiff: supply exactly one of original-uri or original-text attributes, or an input <dc:text>...</dc:text> document on port original"
+		    );
+		}
+	    }
 	}
 
-	s = getOption(_revised_uri, (String) null);
+	// now the same for revised
+	s = getOption(_revised_text, (String) null);
 	if (s != null) {
-	    revised_uri = s;
+	    // [1] got revised-text attribute
+
+	    if (getOption(_revised_uri, (String) null) != null) {
+		throw new XProcException(
+			// Do not include the values in the error message as
+			// they could be very long, could contain newlines, etc
+			"TextDiff: do not supply both revised-uri and revised-text attributes"
+		);
+	    }
+	    revised = new ArrayList<String>(Arrays.asList(
+			s.split("\r?[\n\u0085\u2028\u2029]")));
+	    revised_uri = "data:revised-text";
+	} else {
+	    // revised-text arrtibute not given, try for filename
+	    s = getOption(_revised_uri, (String) null);
+	    if (s != null) {
+		// [2] got filename
+		revised_uri = s;
+		try {
+		    revised = fileToLines(revised_uri);
+		} catch (Exception e) {
+		    throw new XProcException(e);
+		}
+	    } else {
+		// nope, no filename, so try input port
+		s = getTextFromPort(revisedPort);
+		if (s != null) {
+		    // [3] got input port
+		    revised = new ArrayList<String>(Arrays.asList(
+				s.split("\r?[\n\u0085\u2028\u2029]")));
+		    revised_uri = "data:revised-port";
+		} else {
+		    // can't find any input
+		    throw new XProcException(
+			"TextDiff: supply exactly one of revised-uri or revised-text attributes, or an input <dc:text>...</dc:text> document on port revised"
+		    );
+		}
+	    }
 	}
 
+	// now the easy part (for us!): use the input and make a diff
 	try {
-	    List<String> original = fileToLines(original_uri);
-	    List<String> revised  = fileToLines(revised_uri);
 
 	    // Compute diff. Get the Patch object. Patch is the container for computed deltas.
 	    Patch<String> patch = DiffUtils.diff(original, revised);
-	    result.write(patchToXML(patch, runtime, original_uri, revised_uri));
+	    resultPipe.write(patchToXML(patch, runtime, original_uri, revised_uri));
 
 	} catch (Exception e) {
 	    throw new XProcException(e);
 	}
-    } /* run */
+    } // run
 
     public static List<String> fileToLines(String filename) {
 	List<String> lines = new LinkedList<String>();
@@ -220,7 +333,7 @@ public class TextDiff extends DefaultStep {
 	    }
 	}
 	return lines;
-    }
+    } // fileToLines
 
 
 

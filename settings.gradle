@@ -15,9 +15,11 @@ include 'api'
 include 'services:webservice'
 */
 
-rootProject.name = 'xmlcalabash1-liamjycr'
+rootProject.name = 'xmlcalabash1-textdiff'
 
 include 'difflib'
+
+// we depend on the jycr fork of diff utils:
 project(':difflib').projectDir = new File(settingsDir, '../xmlcalabash1-diff-utils-jycr')
 
 version = 0.1

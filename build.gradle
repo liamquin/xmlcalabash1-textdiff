@@ -114,7 +114,7 @@ task sourcesJar(type: Jar) {
 }
 
 task copyJar(dependsOn: jar, type: Copy) {
-  from "build/libs/xmlcalabash1-liamjycr-" + distVersion + ".jar"
+  from "build/libs/xmlcalabash1-textdiff-" + distVersion + ".jar"
   into "build/dist"
 }
 

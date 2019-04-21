@@ -9,12 +9,16 @@
 
     <p:import href="lib/textdiff.xpl" />
 
-    <dc:textdiff original-uri="original.txt" revised-uri="revised.txt">
+    <dc:textdiff original-text="Simon&#xa;Andrew&#xa;Nigel&#xa;Amanda&#xa;Theresa&#xa;">
 	<p:input port="original">
 	    <p:inline><p:data>doc1.txt</p:data></p:inline>
 	</p:input>
 	<p:input port="revised">
-	    <p:inline><p:data>boy.txt</p:data></p:inline>
+	    <p:inline><p:data>Liam
+Simon
+Andrew
+David
+Julie</p:data></p:inline>
 	</p:input>
     </dc:textdiff>
 </p:declare-step>

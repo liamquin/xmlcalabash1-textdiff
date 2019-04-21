@@ -11,17 +11,32 @@ This step should not care which version of Saxon you use, although it does depen
 ## Installation
 
 TextDiff was tested on a Mageia Linux system but should be portable. To build,
+you should have a copy of java-diff-utils-jycr in a parrall directory to this, and
+build it first, and then
 ./gradlew dist
-should work; the dependencies are in Maven.
+should work; all other dependencies are in Maven.
 
 To deploy, you will need the TextDiff jar file in the class path for Calabash,
 as well as the TextDiff jar file.
 
-The step dc:TextDiff must be given two parameters, original-uri and
-revised-uri; these are simple strings and must be the names of the two files you want to compare.
-Despite the names, they are platform-specific file names, not URIs,
-although that may change in the future. In particular, XML Catalogs are not used to resolve
-them, and relative filenames will be looked for in the directory where the XML Calabash process is running.
+The step dc:TextDiff must be given two text files to compare, the original text and a revised version.
+
+You can give the filename of the original in original-uri, or you can supply a
+string whose contents are the entire text file in original-text; you can
+instead supply a simple XML document containing one outer element (which should
+be <dc:text> but this is not currently checked) whose text contents is the file
+on the input port "original". The input source port is not read if either of
+the original-uri or original-text attributes are present. It's an error to give
+both attributes.
+
+The revised file is given in the same way with revised-uri, revised-text or the
+"revised" input port.
+
+Despite the names, original-uri and revised-uri are platform-specific file
+names, not URIs, although that may change in the future. In particular, XML
+Catalogs are not used to resolve them, and relative filenames will be looked
+for in the directory where the XML Calabash process is running.
+
 
 Given the following files
 ````
@@ -54,7 +69,7 @@ then the result consists of an XML-encoded tree:
 Note that the Diff Utils number text lines starting at zero, not one,
 so a change on the first line will have the position attribute set to zero.
 
-
+There is an XSLT 1 stylesheet in lib/textdifftopatch.xsl that converts the XML result to minial Unix diff output, and there are a couple of sample single-step pipelines in the distribution.
 
 
 
