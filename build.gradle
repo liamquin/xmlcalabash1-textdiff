@@ -12,8 +12,8 @@ plugins {
   id "java"
   id "osgi"
   id "maven"
-  id "maven-publish"
-  id "signing"
+  // id "maven-publish"
+  // id "signing"
 }
 
 repositories {
@@ -44,17 +44,17 @@ dependencies {
   compile (
     [group: 'com.nwalsh', name: 'nwalsh-annotations', version: '1.0.0'],
     [group: 'com.xmlcalabash', name: 'xmlcalabash', version: '1.1.1-95'],
-    [group: 'io.github.java-diff-utils', name: 'java-diff-utils', version: '2.2.0']
-    // , [group: 'joda-time', name: 'joda-time', version: '2.7']
+
+    // https://mvnrepository.com/artifact/com.github.wumpz/diffutils
+     [group: 'com.github.wumpz', name: 'diffutils', version: '2.2']
   )
 }
 
-// Variables
 project.ext.saxonRelease = saxonVersion.substring(0,5)
 project.ext.saxonBranch  = saxonVersion.substring(0,3).replaceAll("\\.", "")
-project.ext.releaseVersion = version
-project.ext.distVersion = version + snapshot
-version = project.ext.distVersion // - gets turned into . in some contexts
+project.ext.releaseVersion = '0.0.0.3'
+project.ext.distVersion = '0.0.0.3'
+version = '0.0.0.3'
 
 task copyLib(type: Copy) {
   FileCollection lib = configurations.copydep
@@ -70,9 +70,9 @@ task copyLib(type: Copy) {
 jar {
   manifest {
     instruction 'Built-By', builtBy
-    instruction 'Implementation-Vendor', 'Norman Walsh'
+    instruction 'Implementation-Vendor', 'Liam Quin'
     instruction 'Implementation-Title', 'XML Calabash TextDiff Step'
-    instruction 'Implementation-Version', distVersion
+    instruction 'Implementation-Version', project.ext.distVersion
     instruction 'Bundle-SymbolicName', 'com.delightfulcomputing.textdiff'
     instruction 'Bundle-RequiredExecutionEnvironment', 'J2SE-1.7'
     instruction 'Export-Package', '*, etc'
@@ -114,7 +114,7 @@ task sourcesJar(type: Jar) {
 }
 
 task copyJar(dependsOn: jar, type: Copy) {
-  from "build/libs/xmlcalabash1-textdiff-" + distVersion + ".jar"
+  from "build/libs/xmlcalabash1-textdiff-" + project.ext.distVersion + ".jar"
   into "build/dist"
 }
 
@@ -139,8 +139,8 @@ task makeDist(dependsOn: [ build, copyJar, copyLib ]) {
 
 task zipDist(dependsOn: makeDist, type: Zip) {
   from('build/dist')
-  into 'xmlcalabash1-textdiff-' + distVersion
-  archiveName 'xmlcalabash1-textdiff-' + distVersion + ".zip"
+  into 'xmlcalabash1-textdiff-' + project.ext.distVersion
+  archiveName 'xmlcalabash1-textdiff-' + project.ext.distVersion + ".zip"
 }
 
 task dist(dependsOn: [zipDist]) {
@@ -152,41 +152,5 @@ task dist(dependsOn: [zipDist]) {
 artifacts {
   archives javadocJar
   archives sourcesJar
-}
-
-signing {
-  required { gradle.taskGraph.hasTask("uploadArchives") }
-  sign configurations.archives
-}
-
-// I refuse to put my PGP password in a file.
-//
-// Adapted from
-// https://www.timroes.de/2014/01/19/using-password-prompts-with-gradle-build-files/
-//
-// N.B. This can't work in a CI environment so there's no way to
-// automatically publish the artifacts from, for example, Travis CI.
-//
-gradle.taskGraph.whenReady { taskGraph ->
-  if(taskGraph.hasTask(':uploadArchives')) {
-      throw new InvalidUserDataException("You must enter a password to proceed.")
-  }
-}
-
-publishing {
-  publications {
-    mavenJava(MavenPublication) {
-      groupId 'com.xmlcalabash'
-      artifactId 'xmlcalabash1-textdiff'
-      version version
-      from components.java
-    }
-  }
-  repositories {
-    maven {
-      url 'file://' + new File(System.getProperty('user.home'), '.m2/repository').absolutePath
-   }
-   jcenter()
-  }
 }
 

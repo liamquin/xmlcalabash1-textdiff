@@ -11,7 +11,7 @@ import com.xmlcalabash.library.DefaultStep;
 import com.xmlcalabash.runtime.XAtomicStep;
 import com.xmlcalabash.util.Base64;
 import com.xmlcalabash.util.S9apiUtils;
-import com.xmlcalabash.util.XProcURIResolver;
+// import com.xmlcalabash.util.XProcURIResolver;
 import com.xmlcalabash.util.TreeWriter;
 
 
@@ -27,20 +27,29 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
 
+import java.util.stream.Collectors; // collect
+
+// for stripping whitespace:
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.xml.sax.XMLReader;
 import org.xml.sax.InputSource;
 import org.xml.sax.helpers.XMLReaderFactory;
 import javax.xml.transform.sax.SAXSource;
 
-import difflib.Delta;
-import difflib.Chunk;
-import difflib.Patch;
-import difflib.DiffUtils;
+// for java-diff-utils-jycr
+// import difflib.Delta;
+// import difflib.Chunk;
+// import difflib.Patch;
+// import difflib.DiffUtils;
+// import difflib.DiffRow;
+// import difflib.DiffRowGenerator;
 
-
-/**
- * Created by slave on 2019-03-30
- */
+// for java-diff-utils
+import com.github.difflib.*;
+import com.github.difflib.text.*;
+import com.github.difflib.patch.*;
 
 @XMLCalabash(
     name = "dc:textdiff",
@@ -52,22 +61,29 @@ public class TextDiff extends DefaultStep {
     // private static final String library_xpl = "ttps://www.delightfulcomputing.com/xproc/xpl/textdiff.xpl";
     // private static final String library_url = "/com/delightfulcomputing/extensions/textdiff/library.xpl";
 
-    private ReadablePipe originalPort = null;
-    private ReadablePipe revisedPort = null;
+    private ReadablePipe sourcePort = null;
     private WritablePipe resultPipe = null;
+
+    private Boolean sideBySideMode = false;
+    private Boolean ignoreSpaceMode = false;
+
+    // Instance variables
+
+    // don't care if we have no input
+    //
+    public List<String> original = null;
+    public List<String> revised  = null;
 
     public TextDiff(XProcRuntime runtime, XAtomicStep step) {
         super(runtime, step);
     }
 
     public void setInput(String port, ReadablePipe pipe) throws XProcException {
-	if (port.equals("original")) {
-	    originalPort = pipe;
-	} else if (port.equals("revised")) {
-	    revisedPort = pipe;
+	if (port.equals("source")) {
+	    sourcePort = pipe;
 	} else {
 	    throw new XProcException(
-		"textdiff: unknown port name " + port + " - expected original or revised"
+		"textdiff: unknown port name " + port + " - expected source"
 	    );
 	}
     }
@@ -77,9 +93,30 @@ public class TextDiff extends DefaultStep {
     }
 
     public void reset() {
-        originalPort.resetReader();
-        revisedPort.resetReader();
+        sourcePort.resetReader();
         resultPipe.resetWriter();
+    }
+
+    public static final Pattern WHITESPACE_ALL_BYEBYE = Pattern.compile("[\\t ]+");
+
+    private static String spacetrim(String s)
+    {
+	return WHITESPACE_ALL_BYEBYE.matcher(s.trim()).replaceAll("");
+    }
+
+    private List<String> listCopyWithoutSpaces(
+	    List<String> harry
+	    )
+    {
+	if (!ignoreSpaceMode) {
+	    return harry;
+	}
+
+	List<String> result =
+	    harry.stream().map(
+		    TextDiff::spacetrim
+		    ).collect(Collectors.toList());
+	return result;
     }
 
     private static String deltaType(Delta<String> delta) {
@@ -87,16 +124,20 @@ public class TextDiff extends DefaultStep {
 	    return "null";
 	}
 
-	switch (delta.getType()) {
-	    case CHANGE: return "change";
-	    case DELETE: return "delete";
-	    case INSERT: return "insert";
-	    default: return "naughtydelta";
+	return delta.getType().name().toLowerCase();
+    }
+
+    private static String rowType(DiffRow row) {
+	if (row == null) {
+	    return "null";
 	}
+
+	return row.getTag().name().toLowerCase();
     }
 
     // QName xml_base = new QName("xml", "http://www.w3.org/XML/1998/namespace" ,"base");
     static private final QName c_textdiff = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"textdiff");
+    static private final QName c_row = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"row");
     static private final QName c_delta = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"delta");
     static private final QName c_orig = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"original");
     static private final QName c_rev = new QName("dc", "http://www.delightfulcomputing.com/ns/" ,"revised");
@@ -120,10 +161,11 @@ public class TextDiff extends DefaultStep {
         }
     }
 
-    private static void chunkToXML(
+    private void chunkToXML(
 	    TreeWriter tree,
 	    QName elem,
-	    Chunk<String> chunk
+	    Chunk<String> chunk,
+	    List<String> unstripped
     ) throws SaxonApiException {
 	// we want to make,
 	// <delta type="original">
@@ -137,30 +179,78 @@ public class TextDiff extends DefaultStep {
 	tree.addAttribute(new QName("size"), Integer.toString(chunk.size()));
 
 	ListIterator<String> eachLine = chunk.getLines().listIterator();
+	int p = chunk.getPosition();
 	while (eachLine.hasNext()) {
 	    tree.addStartElement(c_chunk);
-	    tree.addText(eachLine.next());
+	    String s = eachLine.next();
+	    if (ignoreSpaceMode) {
+		s = unstripped.get(p);
+		p++;
+	    }
+	    tree.addText(s);
 	    tree.addEndElement();
 	}
 	tree.addEndElement(); // c_rev
     }
 
-    private static XdmNode patchToXML(
+    private static Patch<String> restoreSpaces(
 	    Patch<String> patch,
+	    List<String> original,
+	    List<String> revised
+    ) throws SaxonApiException
+    {
+	return patch;
+    }
+
+    private XdmNode rowsToXML(
+	    List<DiffRow> rows,
 	    XProcRuntime runtime,
-	    String original_uri,
-	    String revised_uri
+	    String wrapcols
     ) throws SaxonApiException {
 	// Make a simple XML structure
-	
-	// use xml: for e.g. xml:base
-
 	TreeWriter tree = new TreeWriter(runtime);
         tree.startDocument(null); // argument is base URI
         tree.addStartElement(c_textdiff);
-	tree.addAttribute(new QName("original-uri"), original_uri);
-	tree.addAttribute(new QName("revised-uri"), revised_uri);
-	// Add java text utils version as an attribute??
+	tree.addAttribute(new QName("ignore-spaces"), ignoreSpaceMode.toString());
+	tree.addAttribute(new QName("diff-mode"), "side-by-side");
+
+	if (wrapcols != null) {
+	    // We don't actually want to wrap but to truncate.
+	    // The side by side diff can wrap, i think.
+	    tree.addAttribute(new QName("maxwidth"), wrapcols);
+	}
+
+	for (DiffRow row: rows) {
+	    tree.addStartElement(c_row); {
+		tree.addAttribute(new QName("tag"), rowType(row));
+
+		if (row.getOldLine() != null) {
+		    tree.addStartElement(c_orig);
+			tree.addText(row.getOldLine());
+		    tree.addEndElement();
+		}
+
+		if (row.getNewLine() != null) {
+		    tree.addStartElement(c_rev);
+			tree.addText(row.getNewLine());
+		    tree.addEndElement();
+		}
+
+	    } tree.addEndElement();
+	} // for
+
+        tree.endDocument();
+        return tree.getResult();
+    } // rowsToXML
+
+    private XdmNode patchToXML(
+	    Patch<String> patch,
+	    XProcRuntime runtime
+    ) throws SaxonApiException {
+	// Make a simple XML structure
+	TreeWriter tree = new TreeWriter(runtime);
+        tree.startDocument(null); // argument is base URI
+        tree.addStartElement(c_textdiff);
 
 	for (Delta<String> delta: patch.getDeltas()) {
 	    tree.addStartElement(c_delta);
@@ -168,12 +258,12 @@ public class TextDiff extends DefaultStep {
 
 	    Chunk<String> orig = delta.getOriginal();
 	    if (orig != null) {
-		chunkToXML(tree, c_orig, orig);
+		chunkToXML(tree, c_orig, orig, original);
 	    }
 
 	    Chunk<String> rev = delta.getRevised();
 	    if (rev != null) {
-		chunkToXML(tree, c_rev, rev);
+		chunkToXML(tree, c_rev, rev, revised);
 	    }
 
 	    tree.addEndElement(); // c_delta
@@ -188,114 +278,78 @@ public class TextDiff extends DefaultStep {
 	super.run();
 
 	/* attributes */
-	QName _original_uri = new QName("", "original-uri");
-	QName _revised_uri = new QName("", "revised-uri");
-
-	/* or actual content */
 	QName _original_text = new QName("", "original-text");
 	QName _revised_text = new QName("", "revised-text");
 
-	// don't care if we have no input
-	//
-	List<String> original = null;
-	List<String> revised  = null;
-
-	String original_uri = null;
-	String revised_uri = null;
-
 	String s = null;
 
-	// Most of the code in this method is just about trying to find
-	// our input.
-	// Look for explicitly supplied data first; then look for
-	// filenames. That way if both are supplied and the file doesn't
-	// exist, you get the error about supplying both, not an I/O
-	// exception.
-	// Finally, try to read an XProc input port, if there is no text
-	// attribute and filename (URI) attribute
+	Boolean usedPort = false;
 
 	s = getOption(_original_text, (String) null);
 	if (s != null) {
-	    // [1] got original-text attribute
-
-	    if (getOption(_original_uri, (String) null) != null) {
-		throw new XProcException(
-			// Do not include the values in the error message as
-			// they could be very long, could contain newlines, etc
-			"TextDiff: do not supply both original-uri and original-text attributes"
-		);
-	    }
 	    original = new ArrayList<String>(Arrays.asList(
 			s.split("\r?[\n\u0085\u2028\u2029]")));
-	    original_uri = "data:original-text";
 	} else {
-	    // original-text arrtibute not given, try for filename
-	    s = getOption(_original_uri, (String) null);
+	    // original-text arrtibute not given, try for source port
+	    s = getTextFromPort(sourcePort);
+	    usedPort = true;
+
 	    if (s != null) {
-		// [2] got filename
-		original_uri = s;
-		try {
-		    original = fileToLines(original_uri);
-		} catch (Exception e) {
-		    throw new XProcException(e);
-		}
+		original = new ArrayList<String>(Arrays.asList(
+			    s.split("\r?[\n\u0085\u2028\u2029]")));
 	    } else {
-		// nope, no filename, so try input port
-		s = getTextFromPort(originalPort);
-		if (s != null) {
-		    // [3] got input port
-		    original = new ArrayList<String>(Arrays.asList(
-				s.split("\r?[\n\u0085\u2028\u2029]")));
-		    original_uri = "data:original-port";
-		} else {
-		    // can't find any input
-		    throw new XProcException(
-			"TextDiff: supply exactly one of original-uri or original-text attributes, or an input <dc:text>...</dc:text> document on port original"
-		    );
-		}
+		// can't find any input
+		throw new XProcException(
+		    "TextDiff: supply an original-text attribute, or an input <dc:text>...</dc:text> document on the source port."
+		);
 	    }
 	}
 
 	// now the same for revised
 	s = getOption(_revised_text, (String) null);
 	if (s != null) {
-	    // [1] got revised-text attribute
-
-	    if (getOption(_revised_uri, (String) null) != null) {
-		throw new XProcException(
-			// Do not include the values in the error message as
-			// they could be very long, could contain newlines, etc
-			"TextDiff: do not supply both revised-uri and revised-text attributes"
-		);
-	    }
 	    revised = new ArrayList<String>(Arrays.asList(
 			s.split("\r?[\n\u0085\u2028\u2029]")));
-	    revised_uri = "data:revised-text";
-	} else {
-	    // revised-text arrtibute not given, try for filename
-	    s = getOption(_revised_uri, (String) null);
+	} else if (!usedPort) {
+	    s = getTextFromPort(sourcePort);
 	    if (s != null) {
-		// [2] got filename
-		revised_uri = s;
-		try {
-		    revised = fileToLines(revised_uri);
-		} catch (Exception e) {
-		    throw new XProcException(e);
-		}
+		revised = new ArrayList<String>(Arrays.asList(
+			    s.split("\r?[\n\u0085\u2028\u2029]")));
 	    } else {
-		// nope, no filename, so try input port
-		s = getTextFromPort(revisedPort);
-		if (s != null) {
-		    // [3] got input port
-		    revised = new ArrayList<String>(Arrays.asList(
-				s.split("\r?[\n\u0085\u2028\u2029]")));
-		    revised_uri = "data:revised-port";
-		} else {
-		    // can't find any input
-		    throw new XProcException(
-			"TextDiff: supply exactly one of revised-uri or revised-text attributes, or an input <dc:text>...</dc:text> document on port revised"
-		    );
-		}
+		throw new XProcException(
+		    "TextDiff: supply both original-text and revised-text attributes; the source port can replace either one of them"
+		);
+	    }
+	} else {
+	    throw new XProcException(
+		"TextDiff: supply both original-text and revised-text attributes; the source port can replace only one of them"
+	    );
+	}
+	
+	String maxWidth = getOption(new QName("", "max-width"), "132");
+	if (!maxWidth.matches("^\\d+$")) {
+	    throw new XProcException(
+		"TextDiff: max-width must be an integer, not "
+		+ maxWidth
+	    );
+	}
+
+	String mode = getOption(new QName("", "diff-mode"), "default");
+	if (mode != null) {
+	    if (mode.equals("side-by-side")) {
+		sideBySideMode = true;
+	    } else if (!mode.equals("default")) {
+		throw new XProcException(
+		    "TextDiff: mode must be default or side-by-side, not "
+		    + mode
+		);
+	    }
+	}
+
+	{
+	    String tmp = getOption(new QName("", "ignore-spaces"), "false");
+	    if (tmp != null && tmp.equals("true")) {
+		ignoreSpaceMode = true;
 	    }
 	}
 
@@ -303,8 +357,37 @@ public class TextDiff extends DefaultStep {
 	try {
 
 	    // Compute diff. Get the Patch object. Patch is the container for computed deltas.
-	    Patch<String> patch = DiffUtils.diff(original, revised);
-	    resultPipe.write(patchToXML(patch, runtime, original_uri, revised_uri));
+	    if (sideBySideMode) {
+		// Oh, we ain't got a barrel of money
+		// Maybe we're ragged and funny
+		// But we'll travel along, singin' a song
+		// Side by side
+		//
+		// The library wraps using <br> HTML elements, so we turn
+		// that off and instead pass the max-width attribute
+		// to the output, e.g. for XSLT.
+		//
+		DiffRowGenerator generator = DiffRowGenerator.create()
+		    .ignoreWhiteSpaces(ignoreSpaceMode)
+		    .columnWidth(Integer.MAX_VALUE) // do not wrap
+		    .build();
+		List<DiffRow> rows = generator.generateDiffRows(
+			original, revised
+			);
+		// now put the text from original and revised back
+		// into the result, with spaces intact
+		resultPipe.write(
+			rowsToXML(
+			    rows,
+			    runtime, maxWidth));
+	    } else {
+		// default is Unix-style diff
+		Patch<String> patch = DiffUtils.diff(
+		                        listCopyWithoutSpaces(original),
+		                        listCopyWithoutSpaces(revised));
+
+		resultPipe.write(patchToXML(patch, runtime));
+	    }
 
 	} catch (Exception e) {
 	    throw new XProcException(e);
